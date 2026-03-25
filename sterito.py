@@ -27,9 +27,9 @@ STREET_WORDS_PAT = re.compile(
 
 ORDINAL_PAT = re.compile(r'^\d+(?:st|nd|rd|th)\b', re.IGNORECASE)
 
-# ── Noise token patterns (strip these, don't skip the line) ───────────────────
+# ── Noise token patterns ───────────────────────────────────────────────────────
 
-# PO Box token: matches the PO Box segment including its number
+# PO Box token including its number
 PO_BOX_TOKEN_PAT = re.compile(
     r',?\s*\b(?:p\.?\s*o\.?\s*box|po\s*box|gpo\s*box|b\.?\s*p\.?\s*|bp\s*|postbus|'
     r'boite\s*postale|boîte\s*postale|apartado|case\s*postale|'
@@ -37,37 +37,40 @@ PO_BOX_TOKEN_PAT = re.compile(
     re.IGNORECASE
 )
 
-# Floor/Level token: matches floor/level prefix + its number/token
+# Floor/Level token: "Level 26", "Floor 3", "Fl. 5", "Lv. 2"
 FLOOR_TOKEN_PAT = re.compile(
-    r'\b(?:level|floor|fl\.?|lv\.?|étage|etage|verdieping|piso|piano|股|楼|층)\s*'
+    r'\b(?:level|floor|fl\.?|lv\.?|étage|etage|verdieping|piso|piano)\s*'
     r'[\d&]+(?:\w*)[\s,]*',
     re.IGNORECASE
 )
 
-# Standalone L-prefix floor: "L22", "L 5" at word boundary (not followed by street word)
-L_FLOOR_PAT = re.compile(r'\bL\s*\d+\b(?!\s*\w*\s*(?:street|road|avenue|blvd|lane|way|place|drive|court|rue|calle|via|quay|str))', re.IGNORECASE)
-
-# Suite/Unit token: matches suite/unit prefix + its number  (keep what follows)
-SUITE_TOKEN_PAT = re.compile(
-    r'\b(?:suite|ste\.?|unit|apt\.?|room|bureau|ufficio|büro|bureau)\s*[\w.\-]+\s*,?\s*',
+# Standalone L-prefix floor: "L22", "L 5" not followed by a street word
+L_FLOOR_PAT = re.compile(
+    r'\bL\s*\d+\b(?!\s*\w*\s*(?:street|road|avenue|blvd|lane|way|place|drive|court|'
+    r'rue|calle|via|quay|str|strasse|straat|laan|gatan|vägen))',
     re.IGNORECASE
 )
 
-# Ordinal floor: "1st Floor", "2nd Floor", "29th Floor" etc.
+# Suite/Unit token including its identifier
+SUITE_TOKEN_PAT = re.compile(
+    r'\b(?:suite|ste\.?|unit|apt\.?|room|bureau|ufficio|büro)\s*[\w.\-]+\s*,?\s*',
+    re.IGNORECASE
+)
+
+# Ordinal floor: "1st Floor", "7th Floor", "29th Floor"
 ORDINAL_FLOOR_PAT = re.compile(
     r'\b\d+(?:st|nd|rd|th)\s+(?:floor|fl\.?|level|étage)\b\s*,?\s*',
     re.IGNORECASE
 )
 
-# Postal code patterns (country-aware, used only for stripping, NOT for rejecting 5-6 digit street nums)
-# Strategy: only strip postal codes that appear AFTER a city/state name or at end of string
+# Trailing postal codes (stripped only at end of string)
 POSTAL_STRIP_PAT = re.compile(
     r'(?:'
-    r'(?<=[A-Za-z]{2}\s)(?:[A-Z]{1,2}\d{1,2}[A-Z]?\s*\d[A-Z]{2})'  # UK after city
-    r'|(?<=[A-Za-z]\s)\d{5}(?:-\d{4})?(?=\s*$)'                      # US ZIP at end
-    r'|(?<=[A-Za-z]\s)[A-Z]\d[A-Z]\s*\d[A-Z]\d(?=\s*$)'             # CA at end
-    r'|\b\d{4}\s*[A-Z]{2}(?=\s*$)'                                    # NL at end
-    r'|\b\d{3}-\d{4}(?=\s*$)'                                         # JP at end
+    r'(?<=[A-Za-z]{2}\s)(?:[A-Z]{1,2}\d{1,2}[A-Z]?\s*\d[A-Z]{2})'   # UK after city
+    r'|(?<=[A-Za-z]\s)\d{5}(?:-\d{4})?(?=\s*$)'                       # US ZIP at end
+    r'|(?<=[A-Za-z]\s)[A-Z]\d[A-Z]\s*\d[A-Z]\d(?=\s*$)'              # CA at end
+    r'|\b\d{4}\s*[A-Z]{2}(?=\s*$)'                                     # NL at end
+    r'|\b\d{3}-\d{4}(?=\s*$)'                                          # JP at end
     r')',
     re.IGNORECASE
 )
@@ -96,35 +99,35 @@ def extract_no_prefix(text: str):
 
 def strip_noise(line: str) -> str:
     """
-    Remove noise tokens from a line WITHOUT skipping it:
-    - PO Box + its number
-    - Floor/Level + its number
-    - Ordinal floor (7th Floor)
-    - Suite/Unit + its identifier
-    - Trailing postal codes
-    Returns the cleaned string (may still contain the street number).
+    Remove noise tokens from a line WITHOUT skipping it.
+    Strips: Asian floor (24/F), PO Box + number, ordinal floor,
+            floor/level + number, L-floor, suite/unit, trailing postal code.
+    The street number may still remain after stripping.
     """
     s = line
 
-    # Strip PO Box segment (and its number)
+    # Strip Asian floor notation: 24/F, 15/F, 8/F
+    s = re.sub(r'\b\d+/[Ff]\.?\b\s*,?\s*', ' ', s)
+
+    # Strip PO Box segment and its number
     s = PO_BOX_TOKEN_PAT.sub(' ', s)
 
-    # Strip ordinal floor first (before generic floor, to avoid partial matches)
+    # Strip ordinal floor: "7th Floor", "2nd Floor"
     s = ORDINAL_FLOOR_PAT.sub(' ', s)
 
-    # Strip floor/level token
+    # Strip floor/level + number: "Level 26", "Floor 3"
     s = FLOOR_TOKEN_PAT.sub(' ', s)
 
-    # Strip standalone L-floor token
+    # Strip standalone L-floor: "L22", "L 5"
     s = L_FLOOR_PAT.sub(' ', s)
 
-    # Strip suite/unit token
+    # Strip suite/unit + identifier: "Suite 500", "Unit 3B"
     s = SUITE_TOKEN_PAT.sub(' ', s)
 
     # Strip trailing postal code
     s = POSTAL_STRIP_PAT.sub(' ', s)
 
-    # Clean up leftover punctuation/spaces
+    # Clean up extra spaces and punctuation
     s = re.sub(r'\s{2,}', ' ', s)
     s = s.strip().strip(',').strip('-').strip()
 
@@ -139,74 +142,68 @@ def parse_line(line: str):
     Returns (number_str, confidence, kind) or None.
 
     Priority:
-      1. Asian floor notation   24/F
-      2. Compound slash+range   2922/222-227 → 2922/222
-      3. Full slash number      1/1, 48/15
-      4. Range at start         42-47, 109-133
-      5. Spaced slash           39 / 1 → 39
-      6. Number+letter at start 66a, 142B
-      7. Plain leading number   277, 24919
-      8. No. / # pattern        No. 296, #09-06
-      9. Number+letter embedded Jollemanhof 14a
-     10. Number before street keyword  Aon Tower 201 Kent Street
-     11. Spelled number         One Lime Street → 1
+      1. Compound slash+range   2922/222-227 → 2922/222
+      2. Full slash number      1/1, 48/15, 87/2
+      3. Range at start         42-47, 109-133
+      4. Spaced slash           39 / 1 → 39
+      5. Number+letter at start 66a, 142B
+      6. Plain leading number   277, 24919, 100234
+      7. No. / # pattern        No. 296, #09-06
+      8. Number+letter embedded Jollemanhof 14a
+      9. Number before street keyword  Aon Tower 201 Kent Street
+     10. Spelled number         One Lime Street → 1
     """
     line = line.strip().rstrip(' -,').strip()
     if not line or line in ('nan', '-'):
         return None
 
-    # 1. Asian floor notation
-    if re.match(r'^\d+/[Ff]\.?\b', line):
-        m = re.match(r'^(\d+)/[Ff]', line)
-        return (m.group(1) + '/F', 'fort', 'floor_asian')
-
-    # 2. Compound slash+range
+    # 1. Compound slash+range: "2922/222-227" → "2922/222"
     m = re.match(r'^(\d+/\d+)[-–]\d+', line)
     if m:
         return (m.group(1), 'fort', 'slash')
 
-    # 3. Full slash number
+    # 2. Full slash number: "1/1", "48/15", "87/2"
     m = re.match(r'^(\d{1,6}/\d{1,6})\b', line)
     if m:
         return (m.group(1), 'fort', 'slash')
 
-    # 4. Range at start
+    # 3. Range at start: "42-47", "109 - 133"
     m = re.match(r'^(\d+\s*[-–]\s*\d+)\b', line)
     if m:
         return (m.group(1).strip(), 'fort', 'range')
 
-    # 5. Spaced slash
+    # 4. Spaced slash: "39 / 1" → "39"
     m = re.match(r'^(\d+)\s*/\s*\d+', line)
     if m:
         return (m.group(1), 'fort', 'slash')
 
-    # 6. Number+letter suffix at start (not ordinals)
+    # 5. Number+letter suffix at start (not ordinals): "66a", "142B"
     if not ORDINAL_PAT.match(line):
         m = re.match(r'^(\d+[a-zA-Z])\b', line)
         if m:
             return (m.group(1), 'fort', 'suffix')
 
-    # 7. Plain leading number (any length — 5/6 digit street numbers allowed)
+    # 6. Plain leading number (any length — 5/6 digit street numbers allowed)
     m = re.match(r'^(\d+)\b', line)
     if m:
         return (m.group(1), 'fort', 'plain')
 
-    # 8. No. / # pattern
+    # 7. No. / # pattern: "No. 296", "#09-06"
     n = extract_no_prefix(line)
     if n:
         return (n, 'fort', 'no_prefix')
 
-    # 9. Number+letter embedded
+    # 8. Number+letter embedded: "Jollemanhof 14a", "Jerozolimskie 142B"
     m = re.search(r'\b(\d+[a-zA-Z])\b', line)
     if m and not ORDINAL_PAT.match(m.group(1)):
         return (m.group(1), 'moyen', 'suffix_embedded')
 
-    # 10. Number before street keyword
+    # 9. Number immediately before a street keyword
     n2 = find_num_before_street_word(line)
     if n2:
         return (n2, 'moyen', 'near_street')
 
-    # 11. Spelled number at start
+    # 10. Spelled number at start: "One Lime Street" → "1"
     fw = line.split()[0].lower() if line.split() else ''
     if fw in SPELLED_NUMBERS:
         return (SPELLED_NUMBERS[fw], 'fort', 'spelled')
@@ -219,8 +216,9 @@ def parse_line(line: str):
 def smart_extract(row):
     """
     For each line in LN3 → LN4 → LN5:
-      1. Strip noise tokens (PO Box number, floor/level, suite/unit, postal code)
-         WITHOUT skipping the line — the street number may still be present.
+      1. Strip noise tokens (Asian floor, PO Box number, floor/level,
+         ordinal floor, suite/unit, trailing postal code)
+         WITHOUT skipping the line — street number may still be present.
       2. Parse the cleaned line for a street/building number.
       3. Return the first valid result found.
     """
@@ -231,7 +229,7 @@ def smart_extract(row):
         if not raw or raw in ('nan', '-', ''):
             continue
 
-        # Strip noise but keep the line
+        # Strip noise but keep the line alive
         cleaned = strip_noise(raw)
 
         if not cleaned or cleaned in ('nan', '-'):
